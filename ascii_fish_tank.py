@@ -17,7 +17,7 @@ import sys
 import time
 from itertools import groupby
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 MIN_W, MIN_H = 30, 10
 MAX_FISH = 60
@@ -28,7 +28,7 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 HINT_KEYS = ["q quit", "c clock", "d date", "[ ] clock size", "s seconds", "t 12/24h",
-             "n night", "m monitor", "f feed", "v style", "p pause", "+/- fish", "? help"]
+             "n night", "m monitor", "f feed", "v style", "1-4 scene", "p pause", "+/- fish", "? help"]
 HINT = "  ".join(HINT_KEYS)
 
 
@@ -38,6 +38,7 @@ class State:
         self.seconds = args.seconds
         self.h12 = args.h12
         self.style = getattr(args, "style", "ascii")
+        self.scene = getattr(args, "scene", "reef")
         self.date = not getattr(args, "no_date", False)
         self.clock_size = getattr(args, "clock_size", None) or 0  # 0 picks a size
         self.night = getattr(args, "night", "auto")  # "auto", "on" or "off"
@@ -216,11 +217,11 @@ def _pack(colour, factor=1.0):
     return (r << 16) | (g << 8) | b
 
 
-def water_colour(depth):
-    for (d0, c0), (d1, c1) in zip(WATER_STOPS, WATER_STOPS[1:]):
+def water_colour(depth, stops=WATER_STOPS):
+    for (d0, c0), (d1, c1) in zip(stops, stops[1:]):
         if depth <= d1:
             return mix(c0, c1, (depth - d0) / (d1 - d0))
-    return WATER_STOPS[-1][1]
+    return stops[-1][1]
 
 
 # Fish colours. Each function gets the part ("body", "tail" or "fin"), the
@@ -291,6 +292,61 @@ def _shark(part, s, v):
     return (94, 108, 124)
 
 
+def _butterfly(part, s, v):
+    yellow, white, black = (250, 212, 40), (246, 244, 232), (24, 22, 26)
+    if part == "body":
+        if 0.8 < s < 0.89:
+            return black
+        return yellow if s < 0.4 or v < -0.6 else white
+    if part == "tail":
+        return yellow
+    return (236, 190, 30)
+
+
+def _sardine(part, s, v):
+    if part == "body":
+        return (70, 110, 150) if v < -0.2 else (208, 220, 230)
+    return (150, 170, 190)
+
+
+def _angler(part, s, v):
+    if part == "body":
+        return (100, 74, 62) if v > 0.4 else (76, 54, 46)
+    if part == "tail":
+        return (62, 44, 38)
+    return (54, 40, 36)
+
+
+def _lantern(part, s, v):
+    if part == "body":
+        return (92, 112, 142) if v > 0.3 else (42, 62, 98)
+    return (60, 80, 112)
+
+
+# A fourth value marks a pixel that glows.
+LIGHT = (130, 255, 230, 1)
+
+TURTLE = [
+    ["........gggggg........",
+     "......ggGgGgGggg......",
+     ".....gGgGGgGGgGgg..yy.",
+     "....ggGGgGGgGGgGggyyky",
+     "..yyyggggggggggggyyyyy",
+     ".y...YYYYYYYYYYYY.....",
+     ".......yyy....yy......",
+     "......yyy......yy.....",
+     ".....yy..............."],
+    ["........gggggg........",
+     "......ggGgGgGggg......",
+     ".....gGgGGgGGgGgg..yy.",
+     "....ggGGgGGgGGgGggyyky",
+     "..yyyggggggggggggyyyyy",
+     ".y...YYYYYYYYYYYY.....",
+     "..........yyyy..yy....",
+     "............yyy..y....",
+     "......................"],
+]
+
 # len: body length in pixels for the nearest layer. aspect: body height over
 # body length. tail: share of the length taken by the tail fin. tail_h: tail
 # height against the body. fork: depth of the tail notch. dorsal and anal:
@@ -298,23 +354,83 @@ def _shark(part, s, v):
 SPECIES = {
     "clown": dict(colour=_clown, len=(15, 21), aspect=0.5, tail=0.22, tail_h=0.85,
                   fork=0.0, e=0.8, nose=7, dorsal=(0.3, 0.15, 0.75),
-                  anal=(0.25, 0.2, 0.55), speed=(5, 9), weight=4),
+                  anal=(0.25, 0.2, 0.55), speed=(5, 9)),
     "tang": dict(colour=_tang, len=(16, 24), aspect=0.58, tail=0.2, tail_h=0.8,
                  fork=0.35, e=0.75, nose=6, dorsal=(0.22, 0.1, 0.85),
-                 anal=(0.2, 0.1, 0.6), speed=(6, 10), weight=3),
+                 anal=(0.2, 0.1, 0.6), speed=(6, 10)),
     "angel": dict(colour=_angel, len=(13, 18), aspect=1.0, tail=0.24, tail_h=0.6,
                   fork=0.25, e=0.8, nose=6, dorsal=(0.9, 0.15, 0.7),
-                  anal=(0.9, 0.2, 0.7), speed=(3, 6), weight=2),
+                  anal=(0.9, 0.2, 0.7), speed=(3, 6)),
     "gold": dict(colour=_gold, len=(16, 24), aspect=0.52, tail=0.34, tail_h=1.3,
                  fork=0.5, e=0.72, nose=6, dorsal=(0.42, 0.2, 0.7),
-                 anal=(0.3, 0.2, 0.5), speed=(4, 7), weight=3),
+                 anal=(0.3, 0.2, 0.5), speed=(4, 7)),
     "tetra": dict(colour=_tetra, len=(7, 10), aspect=0.42, tail=0.26, tail_h=0.9,
                   fork=0.5, e=0.8, nose=7, dorsal=(0.35, 0.35, 0.65),
-                  anal=(0.3, 0.3, 0.55), speed=(9, 14), weight=3, school=True),
+                  anal=(0.3, 0.3, 0.55), speed=(9, 14), school=True),
     "shark": dict(colour=_shark, len=(44, 56), aspect=0.3, tail=0.2, tail_h=1.5,
                   fork=0.7, e=0.72, nose=3, dorsal=(0.95, 0.4, 0.62),
-                  anal=(0.45, 0.5, 0.66), speed=(6, 8), weight=0),
+                  anal=(0.45, 0.5, 0.66), speed=(6, 8), solo=True),
+    "butterfly": dict(colour=_butterfly, len=(12, 17), aspect=0.82, tail=0.2, tail_h=0.6,
+                      fork=0.0, e=0.85, nose=5, dorsal=(0.3, 0.1, 0.8),
+                      anal=(0.3, 0.15, 0.7), speed=(4, 7)),
+    "sardine": dict(colour=_sardine, len=(9, 13), aspect=0.3, tail=0.24, tail_h=1.0,
+                    fork=0.6, e=0.8, nose=5, dorsal=(0.4, 0.4, 0.6),
+                    anal=(0.3, 0.3, 0.5), speed=(10, 15), school=True),
+    "angler": dict(colour=_angler, len=(16, 22), aspect=0.8, tail=0.2, tail_h=0.7,
+                   fork=0.0, e=1.3, nose=9, dorsal=(0.2, 0.1, 0.5),
+                   anal=(0.2, 0.15, 0.45), speed=(2, 4)),
+    "lantern": dict(colour=_lantern, len=(8, 11), aspect=0.38, tail=0.26, tail_h=0.9,
+                    fork=0.5, e=0.8, nose=7, dorsal=(0.35, 0.35, 0.65),
+                    anal=(0.3, 0.3, 0.55), speed=(6, 10), school=True,
+                    lights=((0.25, 0.5), (0.5, 0.5), (0.72, 0.5))),
+    # Drawn by hand, so it has no body measurements.
+    "turtle": dict(art=[TURTLE[0], TURTLE[0], TURTLE[1], TURTLE[1]], len=(22, 22),
+                   speed=(3, 5), solo=True),
 }
+
+# What changes from one scene to the next: the water, the bottom, what grows
+# there and which fish live in it. c16 holds the eight background colours for
+# the Linux console: four water tones from deep to shallow, a highlight, sand,
+# plants and rock.
+SCENES = {
+    "reef": dict(
+        water=WATER_STOPS, ray=RAY, rays=0.42, haze=HAZE, surface=(0x9ADBF7, 0xE2F8FF),
+        sand=mix(0xC9AE74, 0x0B3F78, 0.22), rocks=(0x70757D, 0x7A6C5C, 0x5E6670), rock_gap=45,
+        plants=((0x1E8A3C, 0x7BD65A), (0x14703A, 0x4FBF6A), (0x2C9A54, 0xB6E36A)),
+        accent=(0x7A2438, 0xD0566A), plant_h=(0.18, 0.5), plant_gap=(7, 16), blades=(2, 6),
+        corals=60, fish=dict(clown=4, tang=3, angel=2, gold=3, tetra=3), shark=0.06,
+        c16=C16[:8]),
+    "lagoon": dict(
+        water=[(0.0, 0x86E8E0), (0.35, 0x40C6CE), (0.7, 0x1F9AB6), (1.0, 0x157290)],
+        ray=0xF4FFF0, rays=0.5, haze=0x2C9FB4, surface=(0xC4F6F2, 0xFFFFFF),
+        sand=0xE2D4A8, rocks=(0x8A8C88, 0x9A8C78), rock_gap=90,
+        plants=((0x1E9A50, 0x8CE070), (0x2CA868, 0xC0EE80)),
+        accent=(0xC84870, 0xFF9AB0), plant_h=(0.1, 0.28), plant_gap=(12, 24), blades=(2, 5),
+        corals=20, fish=dict(clown=4, tang=3, angel=2, butterfly=4, tetra=2, turtle=1),
+        shark=0.0,
+        c16=[0x157290, 0x1F9AB6, 0x40C6CE, 0x86E8E0, 0xD8FAF6, 0xD6C8A0, 0x1F8A4A, 0x6A7480]),
+    "kelp": dict(
+        water=[(0.0, 0x5CBC9C), (0.35, 0x2C8672), (0.7, 0x14504A), (1.0, 0x082A2C)],
+        ray=0xDCF8B4, rays=0.5, haze=0x1C6458, surface=(0xA8E6C8, 0xE6FFF0),
+        sand=0x8E8260, rocks=(0x5E665E, 0x6E6654, 0x4E5650), rock_gap=24,
+        plants=((0x4A5A14, 0xA8B83C), (0x3C5218, 0x8FA834), (0x5A6418, 0xC8C050)),
+        accent=(0x2C7A3C, 0x7BD65A), plant_h=(0.55, 0.95), plant_gap=(6, 13), blades=(1, 3),
+        leafy=True, corals=0, fish=dict(gold=4, sardine=4, tang=1), shark=0.08,
+        c16=[0x082A2C, 0x14504A, 0x2C8672, 0x5CBC9C, 0xB8ECCC, 0x8A7C58, 0x5A7A1E, 0x565E58]),
+    "deep": dict(
+        water=[(0.0, 0x0A1C3A), (0.4, 0x061226), (1.0, 0x02060F)],
+        ray=0x2A4A7A, rays=0.0, haze=0x040C1C, surface=None,
+        sand=0x3E3E4A, rocks=(0x30343E, 0x3A3640, 0x282C36), rock_gap=28,
+        plants=((0xB8B0A8, 0xC02828),),
+        accent=(0xB8B0A8, 0xE04040), plant_h=(0.06, 0.16), plant_gap=(14, 30), blades=(2, 5),
+        corals=0, fish=dict(angler=2, lantern=4), shark=0.0, jellies=True, glow=True,
+        c16=[0x02060F, 0x061226, 0x0A1C3A, 0x16305A, 0x3A5A8A, 0x44444F, 0x6A1C24, 0x2A2E38]),
+}
+SCENE_NAMES = list(SCENES)
+CORALS = ((0xD84A6A, 0xFFB0C0), (0xE8703A, 0xFFD08A), (0x8A4AC8, 0xD8B0FF),
+          (0xE8C83A, 0xFFF0A0))
+JELLY = (0xFF7AC8, 0x7ADFFF, 0xB48AFF, 0x8AFFC8)
+LURE = 0xFFF0A0 | EMISSIVE
 
 TAIL_FRAMES = (1.0, 0.88, 0.7, 0.88)
 LAYER_SCALE = (0.6, 0.8, 1.0)
@@ -396,10 +512,14 @@ def _draw_fish(spec, length, squeeze):
             grid[ey][ex - 1] = (245, 245, 240)
         if length >= 22 and ey and grid[ey - 1][ex]:
             grid[ey - 1][ex] = (245, 245, 240)
+    for along, down in spec.get("lights", ()):
+        px, py = int(tail_w + along * body_w), top + int(down * half * 0.6)
+        if py < len(grid) and grid[py][px]:
+            grid[py][px] = LIGHT
     return grid
 
 
-def _spans(grid, haze):
+def _spans(grid, haze, colour=HAZE):
     out = []
     for row in grid:
         spans = []
@@ -411,21 +531,25 @@ def _spans(grid, haze):
             x0 = x
             while x < n and row[x] is not None:
                 x += 1
-            spans.append((x0, [mix(_pack(c), HAZE, haze) for c in row[x0:x]]))
+            spans.append((x0, [mix(_pack(c[:3]), colour, haze) | (EMISSIVE if len(c) > 3 else 0)
+                               for c in row[x0:x]]))
         out.append(spans)
     return out
 
 
-def fish_sprites(name, length, layer):
+def fish_sprites(name, length, layer, colour=HAZE):
     """Returns (right frames, left frames, width, height), cached."""
-    key = (name, length, layer)
+    key = (name, length, layer, colour)
     if key not in _SPRITES:
-        right, left = [], []
-        for squeeze in TAIL_FRAMES:
-            grid = _draw_fish(SPECIES[name], length, squeeze)
-            right.append(_spans(grid, LAYER_HAZE[layer]))
-            left.append(_spans([row[::-1] for row in grid], LAYER_HAZE[layer]))
-        _SPRITES[key] = (right, left, length, len(right[0]))
+        spec = SPECIES[name]
+        if "art" in spec:
+            grids = [[[PALETTE.get(ch) for ch in line] for line in art] for art in spec["art"]]
+        else:
+            grids = [_draw_fish(spec, length, squeeze) for squeeze in TAIL_FRAMES]
+        haze = LAYER_HAZE[layer]
+        right = [_spans(grid, haze, colour) for grid in grids]
+        left = [_spans([row[::-1] for row in grid], haze, colour) for grid in grids]
+        _SPRITES[key] = (right, left, len(grids[0][0]), len(grids[0]))
     return _SPRITES[key]
 
 
@@ -456,6 +580,7 @@ PALETTE = {
     "u": (74, 42, 106), "U": (122, 74, 160),
     "r": (168, 44, 32), "R": (216, 64, 44), "k": (16, 16, 20),
     "s": (176, 122, 58), "S": (224, 176, 96), "b": (216, 200, 160),
+    "g": (46, 110, 70), "G": (104, 166, 92), "y": (150, 160, 90), "Y": (214, 206, 150),
 }
 SHELLS = [
     [".pPp.", "pPpPp", "pPpPp", ".ppp."],              # scallop
@@ -514,8 +639,9 @@ BARS = {"a": (0, 0, 4, 1), "g": (0, 3, 4, 1), "d": (0, 6, 4, 1), "f": (0, 0, 1, 
 class PixelTank:
     style = "pixel"
 
-    def __init__(self, n_fish, rng):
+    def __init__(self, n_fish, rng, scene="reef"):
         self.rng = rng
+        self.scene = scene
         self.n_fish = n_fish
         self.w = self.h = self.ph = 0
         self.t = 0.0
@@ -531,18 +657,23 @@ class PixelTank:
         self.glow = {}
         self.lit_colours = set()
         self.dark = {}
+        self.tint = {}
         self.critters = []
         self.sparks = []
+        self.jellies = []
         self.clock_u = self.clock_max = 0
+        sc = self.sc = SCENES[self.scene]
+        self.c16 = sc["c16"] + C16[8:]
+        haze = sc["haze"]
         if w < MIN_W or h < MIN_H:
             return
 
         self.pal = []
         for y in range(ph):
             d = y / (ph - 1)
-            base = water_colour(d)
-            strength = 0.42 * (1 - d) ** 1.4
-            self.pal.append([mix(base, RAY, i / (N_LEVELS - 1) * strength)
+            base = water_colour(d, sc["water"])
+            strength = sc["rays"] * (1 - d) ** 1.4
+            self.pal.append([mix(base, sc["ray"], i / (N_LEVELS - 1) * strength)
                              for i in range(N_LEVELS)])
         self.slant = ph // 2
         self.levels = b""
@@ -557,7 +688,7 @@ class PixelTank:
         self.floor = min(self.dune)
 
         grid = [dict() for _ in range(ph)]
-        sand = mix(0xC9AE74, 0x0B3F78, 0.22)
+        sand = sc["sand"]
         for x in range(w):
             top = self.dune[x]
             for y in range(top, ph):
@@ -567,11 +698,11 @@ class PixelTank:
             if rng.random() < 0.06 and top + 1 < ph:
                 grid[top + 1][x] = mix(sand, 0x1A1410, 0.55)
 
-        for _ in range(max(1, w // 45)):
+        for _ in range(max(1, w // sc["rock_gap"])):
             cx = rng.randrange(4, w - 4)
             radius = rng.randint(4, max(5, min(14, w // 12)))
             height = radius * rng.uniform(0.6, 1.0)
-            tone = rng.choice((0x70757D, 0x7A6C5C, 0x5E6670))
+            tone = rng.choice(sc["rocks"])
             for dx in range(-radius, radius + 1):
                 x = cx + dx
                 if not 0 <= x < w:
@@ -582,7 +713,11 @@ class PixelTank:
                     if 0 <= y < ph:
                         light = 0.62 + 0.5 * k / max(1, col_h) - 0.14 * dx / radius
                         light *= rng.uniform(0.92, 1.06)
-                        grid[y][x] = mix(mix(0, tone, min(1.0, light)), HAZE, 0.15)
+                        grid[y][x] = mix(mix(0, tone, min(1.0, light)), haze, 0.15)
+
+        if sc["corals"]:
+            for _ in range(max(1, w // sc["corals"])):
+                self._coral(grid, rng.randrange(3, w - 3))
 
         for _ in range(max(2, w // 14)):
             art = rng.choice(SHELLS)
@@ -593,7 +728,7 @@ class PixelTank:
                 for dx, ch in enumerate(line):
                     c = PALETTE.get(ch)
                     if c and x0 + dx < w and 0 <= y < ph:
-                        grid[y][x0 + dx] = mix(_pack(c), HAZE, 0.12)
+                        grid[y][x0 + dx] = mix(_pack(c), haze, 0.12)
 
         self.static = []
         for cells in grid:
@@ -608,24 +743,24 @@ class PixelTank:
                 i = j + 1
             self.static.append(spans)
 
-        greens = ((0x1E8A3C, 0x7BD65A), (0x14703A, 0x4FBF6A), (0x2C9A54, 0xB6E36A))
+        self.leafy = sc.get("leafy", False)
         self.plants = []
         x = rng.randint(2, 8)
         while x < w - 2:
-            base, tip = (0x7A2438, 0xD0566A) if rng.random() < 0.15 else rng.choice(greens)
+            base, tip = sc["accent"] if rng.random() < 0.15 else rng.choice(sc["plants"])
             front = rng.random() < 0.3
-            tallest = max(4, int(ph * rng.uniform(0.18, 0.5)))
+            tallest = max(4, min(self.floor - 5, int(ph * rng.uniform(*sc["plant_h"]))))
             blades = []
-            for _ in range(rng.randint(2, 6)):
+            for _ in range(rng.randint(*sc["blades"])):
                 bx = min(w - 1, max(0, x + rng.randint(-2, 2)))
                 height = max(3, int(tallest * rng.uniform(0.5, 1.0)))
-                cols = [mix(mix(base, tip, i / height), HAZE, 0.0 if front else 0.4)
+                cols = [mix(mix(base, tip, i / height), haze, 0.0 if front else 0.4)
                         for i in range(height)]
                 blades.append((bx, self.dune[bx], height, rng.uniform(0, 6.28),
                                rng.uniform(1.5, 4.0) * height / 20,
                                rng.uniform(-0.15, 0.15), cols))
             self.plants.append((front, blades))
-            x += rng.randint(7, 16)
+            x += rng.randint(*sc["plant_gap"])
 
         self.stones = [rng.randrange(3, w - 3) for _ in range(1 + w // 80)]
         for name, n in (("crab", 1 + w // 120), ("snail", 1 + w // 160)):
@@ -633,10 +768,40 @@ class PixelTank:
                 self.critters.append([name, rng.uniform(2, w - 12), rng.choice((-1, 1)), 0.0])
         self.sparks = [(rng.randrange(w), rng.randrange(5, self.floor), rng.uniform(0, 6.28))
                        for _ in range(w * ph // 350)]
+        if sc.get("jellies"):
+            for _ in range(2 + w // 45):
+                r = rng.randint(3, max(3, min(6, ph // 12)))
+                self.jellies.append([rng.uniform(r, w - r),
+                                     rng.uniform(6, max(7, self.floor - 4 * r)), r,
+                                     rng.uniform(0, 6.28), rng.choice(JELLY),
+                                     rng.uniform(-1.2, 1.2), True])
         count = self.n_fish
         if count is None:
             count = max(3, min(18, w * ph // 900))
         self.set_fish(count, scatter=True)
+
+    def _coral(self, grid, cx):
+        """Grows a branching coral up from the sand."""
+        rng, w, ph = self.rng, self.w, self.ph
+        base, tip = rng.choice(CORALS)
+        foot = self.dune[cx]
+        height = rng.randint(6, max(7, min(16, ph // 5)))
+        arms = [(float(cx), foot, 0.0, height)]
+        grown = 0
+        while arms:
+            x, y, lean, n = arms.pop()
+            for i in range(n):
+                yy = y - i
+                colour = mix(mix(base, tip, min(1.0, (foot - yy) / height)),
+                             self.sc["haze"], 0.12)
+                for xx in (int(x + 0.5), int(x + 0.5) + (1 if n - i > 2 else 0)):
+                    if 0 <= xx < w and 0 <= yy < ph:
+                        grid[yy][xx] = colour
+                x += lean
+                if i >= 2 and n - i > 3 and grown < 10 and rng.random() < 0.3:
+                    grown += 1
+                    arms.append((x, yy, lean + rng.choice((-0.6, 0.6)),
+                                 int((n - i) * rng.uniform(0.6, 0.9))))
 
     def set_fish(self, count, scatter=False):
         count = max(0, min(MAX_FISH, count))
@@ -651,19 +816,21 @@ class PixelTank:
         if self.w < MIN_W or self.h < MIN_H:
             return None
         rng = self.rng
-        names = [n for n, spec in SPECIES.items() if spec["weight"]]
-        weights = [SPECIES[n]["weight"] for n in names]
-        shark_ok = (not scatter and self.ph >= 44 and self.w >= 90
-                    and all(f.name != "shark" for f in self.fish))
+        names = list(self.sc["fish"])
+        weights = list(self.sc["fish"].values())
+        shark_ok = not scatter and self.ph >= 44 and self.w >= 90
         for _ in range(8):
-            if shark_ok and rng.random() < 0.06:
+            if shark_ok and rng.random() < self.sc["shark"]:
                 name = "shark"
             else:
                 name = rng.choices(names, weights)[0]
             spec = SPECIES[name]
-            layer = 2 if name == "shark" else rng.choice((0, 1, 1, 2, 2))
+            solo = spec.get("solo")
+            if solo and any(f.name == name for f in self.fish):
+                continue
+            layer = 2 if solo else rng.choice((0, 1, 1, 2, 2))
             length = max(6, int(rng.randint(*spec["len"]) * LAYER_SCALE[layer]))
-            right, left, w, h = fish_sprites(name, length, layer)
+            right, left, w, h = fish_sprites(name, length, layer, self.sc["haze"])
             if h <= self.floor - 8 and w <= self.w * 0.6:
                 break
         else:
@@ -774,6 +941,22 @@ class PixelTank:
             elif c[1] > w - cw - 1:
                 c[1], c[2] = float(w - cw - 1), -1
 
+        for j in self.jellies:
+            # A jellyfish climbs in pulses, then sinks for a while.
+            j[3] += dt * 1.8
+            if j[6]:
+                j[1] -= (2.6 * max(0.0, math.sin(j[3])) - 0.4) * dt
+            else:
+                j[1] += 0.6 * dt
+            j[0] += j[5] * dt
+            if j[1] < 5:
+                j[6] = False
+            elif j[1] > floor - 4 * j[2]:
+                j[6] = True
+            if not j[2] < j[0] < w - j[2]:
+                j[5] = -j[5]
+                j[0] = max(float(j[2]), min(float(w - j[2]), j[0]))
+
         for k in self.flakes:
             x = min(w - 1, max(0, int(k[0])))
             if k[1] < self.dune[x] - 1:
@@ -802,28 +985,30 @@ class PixelTank:
             start = slant - y // 2
             rows.append(list(map(pal[y].__getitem__, levels[start:start + w])))
 
-        # Waves on the surface, seen from below.
+        # Waves on the surface, seen from below. The deep sea has none.
         r0, r1, r2, r3 = rows[0], rows[1], rows[2], rows[3]
-        for x in range(w):
+        mid, foam = self.sc["surface"] or (0, 0)
+        for x in range(w if self.sc["surface"] else 0):
             crest = 1.6 + math.sin(x * 0.13 + t * 1.3) + 0.6 * math.sin(x * 0.31 - t * 1.9)
-            r0[x] = 0x9ADBF7
+            r0[x] = mid
             if crest >= 1:
-                r1[x] = 0x9ADBF7 if crest >= 2 else 0xE2F8FF
+                r1[x] = mid if crest >= 2 else foam
                 if crest >= 2:
-                    r2[x] = 0x9ADBF7 if crest >= 3 else 0xE2F8FF
+                    r2[x] = mid if crest >= 3 else foam
                     if crest >= 3:
-                        r3[x] = 0xE2F8FF
+                        r3[x] = foam
             else:
-                r0[x] = 0xE2F8FF
+                r0[x] = foam
 
         text = {}
+        self._draw_plants(rows, False)
+        # The clock goes over the far plants, so tall kelp does not hide it.
         y = max(6, int(ph * 0.08))
         if state.clock:
             y = self._draw_clock(rows, state, now)
         if state.date:
             self._draw_date(rows, now, y, bool(state.clock) and self.clock_u >= 4)
 
-        self._draw_plants(rows, False)
         for spans, row in zip(self.static, rows):
             for x0, cols in spans:
                 row[x0:x0 + len(cols)] = cols
@@ -835,6 +1020,7 @@ class PixelTank:
 
         for layer in (0, 1):
             self._draw_fish(rows, layer)
+        self._draw_jellies(rows)
         self._draw_plants(rows, True)
         self._draw_fish(rows, 2)
 
@@ -853,7 +1039,7 @@ class PixelTank:
             y = int(fy)
             if 0 <= x < w and 0 <= y < ph:
                 rows[y][x] = 0xE8B04A if phase > 3 else 0xD0703A
-        if night:
+        if night or self.sc.get("glow"):
             # Glowing plankton.
             for x, y, phase in self.sparks:
                 if math.sin(t * 1.7 + phase) > 0.7:
@@ -887,9 +1073,45 @@ class PixelTank:
                 y = f.y + oy + (math.sin(t * 1.5 + phase) * 1.2 if phase else 0.0)
                 y = max(3.0, min(floor - f.h - 1.0, y))
                 blit(rows, sprite, math.floor(f.x - f.dir * ox), int(y), w, ph)
+            if f.name == "angler":
+                # The lure hangs on a stalk ahead of the head.
+                nose = math.floor(f.x) + (f.w - 1 if f.dir > 0 else 0)
+                top = int(max(3.0, min(floor - f.h - 1.0, f.y)))
+                for back, colour in ((0, LURE), (1, 0x6A5044), (2, 0x6A5044)):
+                    x = nose - f.dir * back
+                    if 0 <= x < w:
+                        rows[top + back][x] = colour
+
+    def _draw_jellies(self, rows):
+        w, t, floor, tint = self.w, self.t, self.floor, self.tint
+
+        def put(x, y, colour, level):
+            if 0 <= x < w and 3 <= y < floor:
+                key = (rows[y][x], colour, level)
+                c = tint.get(key)
+                if c is None:
+                    if len(tint) > 20000:
+                        tint.clear()
+                    c = tint[key] = mix(key[0] & RGB, colour, level) | EMISSIVE
+                rows[y][x] = c
+
+        for cx, cy, r, phase, colour, _drift, _rising in self.jellies:
+            x0, y0 = int(cx), int(cy)
+            squeeze = 1 - 0.18 * max(0.0, math.sin(phase))
+            for dy in range(r):
+                n = int(r * squeeze * math.sqrt(1 - ((r - dy - 0.5) / r) ** 2) + 0.5)
+                for dx in range(-n, n + 1):
+                    rim = dy == 0 or dy == r - 1 or abs(dx) == n
+                    put(x0 + dx, y0 + dy, colour, 0.9 if rim else 0.45)
+            for k in range(-r + 1, r, 2):
+                length = 2 * r + k % 3
+                for i in range(length):
+                    wave = math.sin(t * 2 + phase + i * 0.7 + k) * 1.2 * i / length
+                    put(x0 + k + int(round(wave)), y0 + r + i, colour,
+                        0.6 if i < length // 2 else 0.3)
 
     def _draw_plants(self, rows, front):
-        w, ph, t = self.w, self.ph, self.t
+        w, ph, t, leafy = self.w, self.ph, self.t, self.leafy
         for is_front, blades in self.plants:
             if is_front != front:
                 continue
@@ -907,6 +1129,11 @@ class PixelTank:
                         rows[y][x] = cols[i]
                         if i < thick and x + 1 < w:
                             rows[y][x + 1] = cols[i]
+                    if leafy and i % 4 == 1:
+                        # Kelp leaves, one side then the other.
+                        side = x + (2 if i % 8 == 1 else -1)
+                        if 0 <= side < w:
+                            rows[y][side] = cols[min(height - 1, i + height // 4)]
 
     def _glow_rect(self, rows, x, y, width, height, colour=None):
         """Lightens a rectangle of water, or fills it when a colour is given."""
@@ -1006,8 +1233,15 @@ class PixelEncoder:
     def __init__(self, mode):
         self.mode = mode
         self.night = False
+        self.c16 = C16
         self.cache = {}
         self.near = {}
+
+    def set_palette(self, c16):
+        if c16 != self.c16:
+            self.c16 = c16
+            self.cache.clear()
+            self.near.clear()
 
     def set_night(self, night):
         if night != self.night:
@@ -1029,7 +1263,7 @@ class PixelEncoder:
             r, g, b = colour >> 16, (colour >> 8) & 255, colour & 255
             best, best_d = 0, None
             for i in range(limit):
-                p = C16[i]
+                p = self.c16[i]
                 d = ((r - (p >> 16)) ** 2 + (g - ((p >> 8) & 255)) ** 2
                      + (b - (p & 255)) ** 2)
                 if best_d is None or d < best_d:
@@ -1119,6 +1353,7 @@ def render_pixel(tank, state, encoder, hint=False):
     now = time.localtime()
     night = is_night(state, now)
     encoder.set_night(night)
+    encoder.set_palette(tank.c16)
     rows, text = tank.draw(state, now, hint, night)
     return [encoder.line(rows[2 * y], rows[2 * y + 1], text.get(y)) for y in range(h)]
 
@@ -1221,8 +1456,9 @@ class Fish:
 class AsciiTank:
     style = "ascii"
 
-    def __init__(self, n_fish, rng):
+    def __init__(self, n_fish, rng, scene="reef"):
         self.rng = rng
+        self.scene = scene
         self.n_fish = n_fish  # None means pick a number from the tank size
         self.w = self.h = 0
         self.floor = 0
@@ -1470,6 +1706,8 @@ def handle_keys(data, state, tank, now):
                 state.clock_size = max(1, min(top, size + (1 if ch == "]" else -1)))
         elif ch == "v":
             state.style = "ascii" if state.style == "pixel" else "pixel"
+        elif ch.isdigit() and 1 <= int(ch) <= len(SCENE_NAMES):
+            state.scene = SCENE_NAMES[int(ch) - 1]
         elif ch == "f":
             tank.feed()
         elif ch in ("p", " "):
@@ -1495,10 +1733,10 @@ def colour_mode(choice):
     return "true"
 
 
-def console_palette(out, on):
-    """Loads or resets the 16 colour palette of the Linux console."""
-    if on:
-        out.write("".join("\x1b]P%X%06X" % (i, c) for i, c in enumerate(C16)))
+def console_palette(out, colours):
+    """Loads a 16 colour palette into the Linux console, or resets it."""
+    if colours:
+        out.write("".join("\x1b]P%X%06X" % (i, c) for i, c in enumerate(colours)))
     else:
         out.write("\x1b]R")
 
@@ -1546,15 +1784,17 @@ def run(args, colour, mode):
             last = now
 
             new_size = tuple(os.get_terminal_size(fd_out))
-            if tank is None or tank.style != state.style or new_size != size:
+            if (tank is None or tank.style != state.style or tank.scene != state.scene
+                    or new_size != size):
                 if tank is None or tank.style != state.style:
                     count = tank.n_fish if tank else args.fish
                     kind = PixelTank if state.style == "pixel" else AsciiTank
                     tank = kind(count, random.Random())
-                    if own_palette:
-                        console_palette(out, state.style == "pixel")
+                tank.scene = state.scene
                 size = new_size
                 tank.resize(*size)
+                if own_palette:
+                    console_palette(out, getattr(tank, "c16", None))
                 prev = None
                 out.write("\x1b[0m\x1b[2J")
             if not state.paused:
@@ -1588,7 +1828,7 @@ def run(args, colour, mode):
     finally:
         try:
             if own_palette:
-                console_palette(out, False)
+                console_palette(out, None)
             # The Linux console has no alternate screen, so clear it as well.
             out.write("\x1b[0m\x1b[2J\x1b[H\x1b[?7h\x1b[?25h\x1b[?1049l")
             out.flush()
@@ -1602,7 +1842,7 @@ def snapshot(args, colour, mode):
     size = shutil.get_terminal_size((80, 24))
     state = State(args)
     kind = PixelTank if state.style == "pixel" else AsciiTank
-    tank = kind(args.fish, random.Random())
+    tank = kind(args.fish, random.Random(), state.scene)
     tank.resize(size.columns, size.lines - 1)
     for _ in range(50):
         tank.step(0.1)
@@ -1637,6 +1877,8 @@ def main(argv=None):
     parser.add_argument("--style", choices=("pixel", "ascii"), default="pixel",
                         help="pixel draws with coloured half blocks, ascii with "
                              "plain characters (default pixel)")
+    parser.add_argument("--scene", choices=SCENE_NAMES, default="reef",
+                        help="where the tank is, in the pixel style (default reef)")
     parser.add_argument("--colors", choices=("auto", "true", "256", "16"), default="auto",
                         help="colour depth for the pixel style (default auto)")
     parser.add_argument("--no-clock", action="store_true", help="start with the clock hidden")

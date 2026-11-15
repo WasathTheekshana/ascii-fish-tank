@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Four scenes, picked with the keys `1` to `4` or `--scene`: reef, lagoon, kelp forest and deep sea.
+- New fish: butterflyfish, sardines, anglerfish and lanternfish. A sea turtle swims in the lagoon.
+- Jellyfish glow in the deep sea and swim in pulses.
+- Coral grows on the reef and in the lagoon.
+- The clock is drawn over the far plants, so tall kelp does not hide it.
+- The Linux console gets a 16 colour palette for each scene.
+
 ## 0.2.0
 
 - New pixel style, now the default. It draws two coloured pixels per character with half blocks, in 24-bit, 256 or 16 colours.

@@ -4,13 +4,17 @@
 
 A fish tank that fills the terminal. Clownfish, blue tangs, angelfish, goldfish and schools of neon tetras swim between swaying plants, and now and then a shark passes through. Crabs and snails walk over a sandy bottom scattered with shells, starfish and urchins. Light falls in rays from the surface, bubbles rise from the sand, and you can drop food for the fish to chase.
 
-A clock and the date sit in the water. Both can be hidden and the clock can be resized. At night the tank goes dark and plankton glows. An optional panel shows CPU, memory, disk, temperature and load.
+A clock and the date sit in the water. Both can be hidden and the clock can be resized. At night the tank goes dark and plankton glows. An optional panel shows CPU, memory, disk, temperature and load. The reef is one of four scenes, next to a lagoon, a kelp forest and the deep sea.
 
 ![The tank by day](docs/screenshot.png)
 
 ![The tank at night](docs/screenshot-night.png)
 
 The pictures above are the pixel style at 120 by 34 characters. Each character cell holds two pixels, one above the other, so the tank has twice the vertical detail of normal terminal text. The fish are not stored pictures. They are drawn from a shape and colour description at whatever size the tank needs.
+
+The four scenes, picked with the keys `1` to `4`:
+
+![Reef, lagoon, kelp forest and deep sea](docs/scenes.png)
 
 There is also a plain ASCII style, for terminals without colour or Unicode:
 
@@ -107,6 +111,7 @@ sudo make install
 | `n` | switch night lighting on or off (pixel style) |
 | `m` | show or hide the system monitor |
 | `f` | drop food (pixel style) |
+| `1` to `4` | pick a scene: reef, lagoon, kelp forest, deep sea (pixel style) |
 | `v` | switch between the pixel and ASCII styles |
 | `p` or space | pause |
 | `+` / `-` | add or remove a fish |
@@ -116,6 +121,7 @@ sudo make install
 
 ```
 --style pixel|ascii        how the tank is drawn (default pixel)
+--scene NAME               reef, lagoon, kelp or deep, in the pixel style (default reef)
 --colors auto|true|256|16  colour depth for the pixel style (default auto)
 --no-clock                 start with the clock hidden
 --no-date                  start with the date hidden
@@ -134,6 +140,17 @@ A smaller font gives a more detailed tank, because the tank has one pixel per ha
 
 Below 30 by 10 characters the tank shows "terminal too small". Lower `--fps` if the machine runs warm.
 
+## Scenes
+
+| Key | Scene | What lives there |
+|---|---|---|
+| `1` | reef | clownfish, blue tangs, angelfish, goldfish, neon tetras, coral, sometimes a shark |
+| `2` | lagoon | shallow turquoise water over pale sand, more coral, butterflyfish and a sea turtle |
+| `3` | kelp forest | green water, kelp that reaches the surface, sardine schools, sometimes a shark |
+| `4` | deep sea | no sunlight, glowing jellyfish, anglerfish with a lit lure, lanternfish, tube worms |
+
+Switching scenes builds a new tank, so the fish start in new places. Start in a scene with `--scene`, for example `--scene deep`. The clock, night lighting, feeding and the monitor work in all four.
+
 ## Night
 
 With `--night auto`, the default, the tank is dark from 19:00 to 06:00 by the system clock. Everything dims and turns bluer, the clock and date keep glowing, and plankton sparkles in the water. Press `n` to switch by hand, or start with `--night on` or `--night off`.
@@ -148,7 +165,7 @@ All five readings need Linux. On other systems the panel shows the ones it can g
 
 The pixel style sends 24-bit colour by default. Most current terminals support it, including Windows Terminal, GNOME Terminal, Konsole, kitty, Alacritty and iTerm2. If the colours come out wrong, try `--colors 256`.
 
-On the Linux console (the screen of the machine itself, `TERM=linux`) only 16 colours exist. There the program loads its own 16 colour palette while it runs and puts the default palette back on exit. The picture is coarser than in a 24-bit terminal. If the console font has no block characters, use `--style ascii`.
+On the Linux console (the screen of the machine itself, `TERM=linux`) only 16 colours exist. There the program loads its own 16 colour palette for each scene while it runs and puts the default palette back on exit. The picture is coarser than in a 24-bit terminal. If the console font has no block characters, use `--style ascii`.
 
 ## What the program touches
 

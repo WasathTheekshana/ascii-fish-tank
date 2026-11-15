@@ -134,6 +134,45 @@ class PixelTest(unittest.TestCase):
                     self.assertGreater(count, length)
                     self.assertEqual(count, sum(len(cols) for row in b for _x, cols in row))
 
+    def test_every_scene_draws_in_every_colour_mode(self):
+        for scene in aft.SCENE_NAMES:
+            for mode in ("true", "256", "16"):
+                encoder = aft.PixelEncoder(mode)
+                for w, h in ((30, 10), (80, 24), (200, 60)):
+                    tank = aft.PixelTank(None, random.Random(4), scene)
+                    tank.resize(w, h)
+                    state = aft.State(Args)
+                    for _ in range(100):
+                        tank.step(0.1)
+                    for line in aft.render_pixel(tank, state, encoder):
+                        self.assertEqual(len(SGR.sub("", line)), w, (scene, mode, w, h))
+                    for fish in tank.fish:
+                        self.assertIn(fish.name, list(aft.SCENES[scene]["fish"]) + ["shark"])
+
+    def test_scenes_have_their_own_console_colours(self):
+        seen = set()
+        for scene in aft.SCENE_NAMES:
+            tank = aft.PixelTank(None, random.Random(1), scene)
+            tank.resize(80, 24)
+            self.assertEqual(len(tank.c16), 16)
+            seen.add(tuple(tank.c16))
+        self.assertEqual(len(seen), len(aft.SCENE_NAMES))
+
+    def test_jellyfish_stay_in_the_water(self):
+        tank = aft.PixelTank(None, random.Random(5), "deep")
+        tank.resize(100, 30)
+        self.assertTrue(tank.jellies)
+        for _ in range(1500):
+            tank.step(0.1)
+        for x, y, radius, *_rest in tank.jellies:
+            self.assertTrue(0 <= x <= tank.w)
+            self.assertTrue(3 <= y <= tank.floor)
+
+    def test_drawn_art_is_rectangular(self):
+        for frame in aft.TURTLE:
+            self.assertEqual(len(set(len(line) for line in frame)), 1)
+            self.assertLessEqual(set("".join(frame)), set(aft.PALETTE) | {"."})
+
     def test_food_is_eaten_or_cleared(self):
         tank = make_tank(100, 30, kind=aft.PixelTank)
         tank.feed()
@@ -214,6 +253,15 @@ class KeyTest(unittest.TestCase):
         self.press(b"n")
         self.assertEqual(self.state.night, "off")
 
+    def test_number_keys_pick_a_scene(self):
+        self.assertEqual(self.state.scene, "reef")
+        self.press(b"3")
+        self.assertEqual(self.state.scene, aft.SCENE_NAMES[2])
+        self.press(b"09")
+        self.assertEqual(self.state.scene, aft.SCENE_NAMES[2])
+        self.press(b"1")
+        self.assertEqual(self.state.scene, "reef")
+
     def test_clock_size_keys_stay_in_range(self):
         if self.tank.style == "pixel":
             # One frame, so the tank knows how large the clock can be.
@@ -247,7 +295,8 @@ class PixelKeyTest(KeyTest):
 
 class OptionTest(unittest.TestCase):
     def test_out_of_range_numbers_are_rejected(self):
-        for argv in (["--fps", "0"], ["--fps", "99"], ["--fish", "-1"], ["--fish", "x"]):
+        for argv in (["--fps", "0"], ["--fps", "99"], ["--fish", "-1"], ["--fish", "x"],
+                     ["--scene", "moon"]):
             with self.assertRaises(SystemExit):
                 with open(os.devnull, "w") as devnull:
                     stderr, sys.stderr = sys.stderr, devnull

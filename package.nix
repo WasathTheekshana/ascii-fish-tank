@@ -2,7 +2,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "ascii-fish-tank";
-  version = "0.2.0";
+  version = "0.3.0";
 
   src = ./ascii_fish_tank.py;
   dontUnpack = true;
