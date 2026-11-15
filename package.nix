@@ -2,7 +2,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "ascii-fish-tank";
-  version = "0.1.0";
+  version = "0.2.0";
 
   src = ./ascii_fish_tank.py;
   dontUnpack = true;
@@ -25,7 +25,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "ASCII fish tank for the terminal, with an optional clock";
+    description = "Fish tank for the terminal, with an optional clock";
     mainProgram = "ascii-fish-tank";
     platforms = lib.platforms.unix;
   };
