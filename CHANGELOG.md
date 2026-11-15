@@ -10,7 +10,13 @@
 - `f` drops food and nearby fish swim to it.
 - `v` switches between the pixel and ASCII styles.
 - The clock in the pixel style is a seven segment display that the fish swim in front of.
-- New options `--style` and `--colors`.
+- The date is drawn in pixel letters that glow like the clock. `d` hides it.
+- `[` and `]` change the clock size.
+- Shells, starfish and urchins lie on the sand, and crabs and snails walk across it.
+- Night lighting, automatic from 19:00 to 06:00 or switched with `n`, with glowing plankton.
+- System monitor panel with CPU, memory, disk, temperature and load, switched with `m`.
+- The key list wraps to fit narrow terminals.
+- New options `--style`, `--colors`, `--no-date`, `--clock-size`, `--night` and `--monitor`.
 
 ## 0.1.0
 

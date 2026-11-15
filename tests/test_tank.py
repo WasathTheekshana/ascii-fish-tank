@@ -2,6 +2,7 @@ import os
 import random
 import re
 import sys
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,7 @@ class Args:
     h12 = True
     fish = None
     style = "pixel"
+    night = "off"
 
 
 def make_tank(w, h, seed=1, kind=None):
@@ -57,9 +59,68 @@ class PixelTest(unittest.TestCase):
         plain = [SGR.sub("", line) for line in lines]
         self.assertIn("[paused]", plain[1])
         # Spaces in the text leave the pixels showing.
-        self.assertIn("q quit", plain[-1].replace(aft.UPPER, " "))
-        self.assertTrue(any("20" in line for line in plain))  # the year in the date
+        tail = " ".join(plain[-3:]).replace(aft.UPPER, " ")
+        self.assertIn("q quit", tail)
+        self.assertIn("? help", tail)
         self.assertTrue(all(len(line) == 120 for line in plain))
+
+    def test_night_and_monitor_in_every_colour_mode(self):
+        metrics = [("CPU", "23%", 0.23), ("TEMP", "91C", 0.94), ("LOAD", "0.42", None)]
+        for mode in ("true", "256", "16"):
+            for w, h in ((30, 10), (80, 24), (160, 50)):
+                tank = make_tank(w, h, kind=aft.PixelTank)
+                state = aft.State(Args)
+                state.night, state.monitor, state.metrics = "on", True, metrics
+                for _ in range(30):
+                    tank.step(0.1)
+                lines = aft.render_pixel(tank, state, aft.PixelEncoder(mode))
+                plain = [SGR.sub("", line) for line in lines]
+                self.assertTrue(all(len(line) == w for line in plain), (mode, w, h))
+                self.assertIn("CPU", "".join(plain))
+                self.assertNotIn("\x1b", "".join(plain))
+
+    def test_night_is_darker_but_the_clock_still_glows(self):
+        day, night = aft.PixelEncoder("true"), aft.PixelEncoder("true")
+        night.set_night(True)
+        water = aft.water_colour(0.2)
+        self.assertLess(night._shade(water), day._shade(water))
+        self.assertEqual(night._shade(aft.TEXT), aft.TEXT & aft.RGB)
+
+    def test_night_follows_the_clock_in_auto(self):
+        state = aft.State(Args)
+        state.night = "auto"
+        noon = time.struct_time((2026, 1, 1, 12, 0, 0, 3, 1, 0))
+        late = time.struct_time((2026, 1, 1, 23, 0, 0, 3, 1, 0))
+        self.assertFalse(aft.is_night(state, noon))
+        self.assertTrue(aft.is_night(state, late))
+
+    def test_clock_size_changes_what_is_drawn(self):
+        tank = make_tank(160, 50, kind=aft.PixelTank)
+        state = aft.State(Args)
+        now = time.localtime()
+        lit = []
+        for size in (1, 4):
+            state.clock_size = size
+            rows, _text = tank.draw(state, now, False)
+            lit.append(sum(1 for row in rows for c in row if c & aft.EMISSIVE))
+            self.assertEqual(tank.clock_u, size)
+        self.assertGreater(lit[1], lit[0] * 4)
+        state.clock = state.date = False
+        rows, _text = tank.draw(state, now, False)
+        self.assertEqual(sum(1 for row in rows for c in row if c & aft.EMISSIVE), 0)
+
+    def test_hint_wraps_to_the_width(self):
+        for width in (30, 60, 80, 200):
+            lines = aft.hint_lines(width)
+            self.assertTrue(all(len(line) <= width - 2 for line in lines), width)
+            self.assertEqual("  ".join(lines), aft.HINT)
+
+    def test_system_monitor_never_raises(self):
+        monitor = aft.SysMon()
+        for _ in range(2):
+            for label, value, fraction in monitor.sample():
+                self.assertTrue(label.isalpha() and value)
+                self.assertTrue(fraction is None or isinstance(fraction, float))
 
     def test_every_fish_has_a_body_and_a_mirror_image(self):
         for name, spec in aft.SPECIES.items():
@@ -144,6 +205,24 @@ class KeyTest(unittest.TestCase):
         self.press(b"v")
         self.assertEqual(self.state.style, "ascii")
         self.press(b"f")
+        self.press(b"d")
+        self.assertFalse(self.state.date)
+        self.press(b"m")
+        self.assertTrue(self.state.monitor)
+        self.press(b"n")
+        self.assertEqual(self.state.night, "on")
+        self.press(b"n")
+        self.assertEqual(self.state.night, "off")
+
+    def test_clock_size_keys_stay_in_range(self):
+        if self.tank.style == "pixel":
+            # One frame, so the tank knows how large the clock can be.
+            aft.render_pixel(self.tank, self.state, aft.PixelEncoder("true"))
+        self.press(b"]" * 30)
+        top = getattr(self.tank, "clock_max", 0)
+        self.assertEqual(self.state.clock_size, top)
+        self.press(b"[" * 30)
+        self.assertEqual(self.state.clock_size, 1 if top else 0)
 
     def test_fish_count_stays_in_range(self):
         self.press(b"+" * 200)

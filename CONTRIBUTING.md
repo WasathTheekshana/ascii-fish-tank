@@ -25,7 +25,7 @@ CI runs the same tests, then installs the program with pip, as a `.deb` and with
 - Standard library only. No third-party imports.
 - The ASCII style uses ASCII characters and the 16 basic colours only, so it works on any terminal.
 - The pixel style uses only the half block, full block and space characters.
-- No network access, no file access and no subprocesses.
+- No network access, no file writes and no subprocesses. Only the system monitor reads files.
 - A new pixel fish is an entry in `SPECIES` plus a colour function. A new ASCII fish goes in `_FISH_RIGHT`. Both are drawn facing right and the left-facing copy is generated.
 
 ## Releases

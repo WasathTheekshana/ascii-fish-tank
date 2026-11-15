@@ -27,7 +27,9 @@ DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-HINT = "q quit  c clock  s seconds  t 12/24h  f feed  v style  p pause  +/- fish  ? help"
+HINT_KEYS = ["q quit", "c clock", "d date", "[ ] clock size", "s seconds", "t 12/24h",
+             "n night", "m monitor", "f feed", "v style", "p pause", "+/- fish", "? help"]
+HINT = "  ".join(HINT_KEYS)
 
 
 class State:
@@ -36,6 +38,11 @@ class State:
         self.seconds = args.seconds
         self.h12 = args.h12
         self.style = getattr(args, "style", "ascii")
+        self.date = not getattr(args, "no_date", False)
+        self.clock_size = getattr(args, "clock_size", None) or 0  # 0 picks a size
+        self.night = getattr(args, "night", "auto")  # "auto", "on" or "off"
+        self.monitor = getattr(args, "monitor", False)
+        self.metrics = []  # (label, value, fraction or None), filled by SysMon
         self.paused = False
         self.hint_until = 0.0
 
@@ -54,6 +61,110 @@ def clock_text(state, now):
     date = "%s %d %s %d%s" % (DAYS[now.tm_wday], now.tm_mday,
                               MONTHS[now.tm_mon - 1], now.tm_year, suffix)
     return label, date, suffix
+
+
+def is_night(state, now):
+    if state.night == "auto":
+        return now.tm_hour >= 19 or now.tm_hour < 6
+    return state.night == "on"
+
+
+def hint_lines(width):
+    """The key list, wrapped to fit the width."""
+    lines, cur = [], ""
+    for item in HINT_KEYS:
+        longer = cur + "  " + item if cur else item
+        if cur and len(longer) > width - 2:
+            lines.append(cur)
+            cur = item
+        else:
+            cur = longer
+    lines.append(cur)
+    return lines
+
+
+class SysMon:
+    """Reads CPU, memory, disk, temperature and load. Linux gives all five.
+
+    Each reading is skipped when the system does not offer it.
+    """
+
+    def __init__(self):
+        self.cpu_prev = None
+        self.rows = []
+        self.at = None
+
+    def update(self, now):
+        if self.at is None or now - self.at >= 2:
+            self.at = now
+            self.rows = self.sample()
+
+    @staticmethod
+    def _read(path):
+        with open(path, "rb") as handle:
+            return handle.read(4096).decode("ascii", "replace")
+
+    def _cpu(self):
+        fields = [int(v) for v in self._read("/proc/stat").split("\n")[0].split()[1:9]]
+        idle, total = fields[3] + fields[4], sum(fields)
+        prev, self.cpu_prev = self.cpu_prev, (idle, total)
+        if prev is None or total == prev[1]:
+            return None
+        return 1 - (idle - prev[0]) / (total - prev[1])
+
+    def _memory(self):
+        info = {}
+        for line in self._read("/proc/meminfo").split("\n"):
+            name, _, rest = line.partition(":")
+            if name in ("MemTotal", "MemAvailable"):
+                info[name] = int(rest.split()[0])
+        return 1 - info["MemAvailable"] / info["MemTotal"]
+
+    def _temperature(self):
+        best = None
+        for name in sorted(os.listdir("/sys/class/thermal"))[:32]:
+            if name.startswith("thermal_zone"):
+                try:
+                    value = int(self._read("/sys/class/thermal/%s/temp" % name)) / 1000
+                except (OSError, ValueError):
+                    continue
+                if 0 < value < 150 and (best is None or value > best):
+                    best = value
+        return best
+
+    def sample(self):
+        rows = []
+        errors = (OSError, ValueError, KeyError, IndexError, ZeroDivisionError, AttributeError)
+        try:
+            cpu = self._cpu()
+            if cpu is not None:
+                rows.append(("CPU", "%d%%" % round(cpu * 100), cpu))
+        except errors:
+            pass
+        try:
+            mem = self._memory()
+            rows.append(("MEM", "%d%%" % round(mem * 100), mem))
+        except errors:
+            pass
+        try:
+            usage = shutil.disk_usage("/")
+            disk = usage.used / usage.total
+            rows.append(("DISK", "%d%%" % round(disk * 100), disk))
+        except errors:
+            pass
+        try:
+            temp = self._temperature()
+            if temp is not None:
+                rows.append(("TEMP", "%dC" % round(temp), (temp - 30) / 65))
+        except errors:
+            pass
+        try:
+            load = os.getloadavg()[0]
+            rows.append(("LOAD", ("%.2f" if load < 10 else "%.1f") % load,
+                         load / (os.cpu_count() or 1)))
+        except errors:
+            pass
+        return rows
 
 
 def too_small(w, h):
@@ -76,6 +187,13 @@ RAY = 0xA8E4FF
 HAZE = 0x0F4D86  # distant things fade toward this colour
 WHITE = 0xFFFFFF
 N_LEVELS = 6
+# Marks a colour that gives off its own light, so night does not dim it.
+EMISSIVE = 0x1000000
+RGB = 0xFFFFFF
+SPARK = 0x7FFFD4 | EMISSIVE
+TEXT = 0xD8F4FF | EMISSIVE
+GOOD, WARN, BAD = 0x5FE08A | EMISSIVE, 0xF5D020 | EMISSIVE, 0xFF5A4A | EMISSIVE
+TRACK = 0x2F628A
 
 # Palette loaded into the Linux console, which has 16 colours and only
 # allows the first 8 as a background.
@@ -329,6 +447,58 @@ def blit(rows, sprite, x, y, w, h):
                 row[xx:xx + len(cols)] = cols
 
 
+# Shells and small animals on the sand, drawn with the letters of PALETTE.
+PALETTE = {
+    "p": (232, 184, 192), "P": (248, 224, 224),
+    "c": (216, 192, 144), "C": (244, 230, 192),
+    "w": (240, 240, 232),
+    "o": (232, 96, 58), "O": (245, 154, 106),
+    "u": (74, 42, 106), "U": (122, 74, 160),
+    "r": (168, 44, 32), "R": (216, 64, 44), "k": (16, 16, 20),
+    "s": (176, 122, 58), "S": (224, 176, 96), "b": (216, 200, 160),
+}
+SHELLS = [
+    [".pPp.", "pPpPp", "pPpPp", ".ppp."],              # scallop
+    [".cc..", "cCCc.", ".cccc"],                       # conch
+    ["www", ".w."],                                    # clam
+    ["..o..", "ooOoo", ".oOo.", ".o.o.", "o...o"],     # starfish
+    ["u.u.u", ".uUu.", "uUUUu", ".uuu."],              # urchin
+]
+CRITTER_ART = {
+    "crab": (3.0, [["r.......r", "rr.k.k.rr", ".rRRRRRr.", "..RRRRR..", ".r.r.r.r."],
+                   ["r.......r", "rr.k.k.rr", ".rRRRRRr.", "..RRRRR..", "r.r...r.r"]]),
+    "snail": (0.5, [["..ss...", ".sSSs.k", ".sSss.b", "bbbbbbb"]]),
+}
+
+
+def _critter(frames):
+    grids = [[[PALETTE.get(ch) for ch in line] for line in art] for art in frames]
+    right = [_spans(grid, 0.1) for grid in grids]
+    left = [_spans([row[::-1] for row in grid], 0.1) for grid in grids]
+    return right, left, len(frames[0][0]), len(frames[0])
+
+
+CRITTERS = {name: (speed,) + _critter(frames) for name, (speed, frames) in CRITTER_ART.items()}
+
+# Three by five pixel letters for the date and the system monitor.
+FONT = {ch: rows.split("/") for ch, rows in {
+    "A": ".#./#.#/###/#.#/#.#", "B": "##./#.#/##./#.#/##.", "C": ".##/#../#../#../.##",
+    "D": "##./#.#/#.#/#.#/##.", "E": "###/#../##./#../###", "F": "###/#../##./#../#..",
+    "G": ".##/#../#.#/#.#/.##", "H": "#.#/#.#/###/#.#/#.#", "I": "###/.#./.#./.#./###",
+    "J": "..#/..#/..#/#.#/.#.", "K": "#.#/#.#/##./#.#/#.#", "L": "#../#../#../#../###",
+    "M": "#.#/###/###/#.#/#.#", "N": "##./#.#/#.#/#.#/#.#", "O": ".#./#.#/#.#/#.#/.#.",
+    "P": "##./#.#/##./#../#..", "Q": ".#./#.#/#.#/###/.##", "R": "##./#.#/##./#.#/#.#",
+    "S": ".##/#../.#./..#/##.", "T": "###/.#./.#./.#./.#.", "U": "#.#/#.#/#.#/#.#/###",
+    "V": "#.#/#.#/#.#/#.#/.#.", "W": "#.#/#.#/###/###/#.#", "X": "#.#/#.#/.#./#.#/#.#",
+    "Y": "#.#/#.#/.#./.#./.#.", "Z": "###/..#/.#./#../###",
+    "0": "###/#.#/#.#/#.#/###", "1": ".#./##./.#./.#./###", "2": "###/..#/###/#../###",
+    "3": "###/..#/###/..#/###", "4": "#.#/#.#/###/..#/..#", "5": "###/#../###/..#/###",
+    "6": "###/#../###/#.#/###", "7": "###/..#/..#/..#/..#", "8": "###/#.#/###/#.#/###",
+    "9": "###/#.#/###/..#/###", "%": "#.#/..#/.#./#../#.#", ".": ".../.../.../.../.#.",
+    ":": ".../.#./.../.#./...", "/": "..#/..#/.#./#../#..", "-": ".../.../###/.../...",
+}.items()}
+
+
 class Swimmer:
     __slots__ = ("name", "layer", "right", "left", "w", "h", "x", "y", "dir",
                  "speed", "phase", "target_y", "retarget", "members", "trail")
@@ -360,6 +530,10 @@ class PixelTank:
         self.fish, self.bubbles, self.flakes = [], [], []
         self.glow = {}
         self.lit_colours = set()
+        self.dark = {}
+        self.critters = []
+        self.sparks = []
+        self.clock_u = self.clock_max = 0
         if w < MIN_W or h < MIN_H:
             return
 
@@ -410,6 +584,17 @@ class PixelTank:
                         light *= rng.uniform(0.92, 1.06)
                         grid[y][x] = mix(mix(0, tone, min(1.0, light)), HAZE, 0.15)
 
+        for _ in range(max(2, w // 14)):
+            art = rng.choice(SHELLS)
+            x0 = rng.randrange(1, max(2, w - 6))
+            base = self.dune[min(w - 1, x0 + len(art[0]) // 2)]
+            for dy, line in enumerate(art):
+                y = base - len(art) + 1 + dy
+                for dx, ch in enumerate(line):
+                    c = PALETTE.get(ch)
+                    if c and x0 + dx < w and 0 <= y < ph:
+                        grid[y][x0 + dx] = mix(_pack(c), HAZE, 0.12)
+
         self.static = []
         for cells in grid:
             spans = []
@@ -443,6 +628,11 @@ class PixelTank:
             x += rng.randint(7, 16)
 
         self.stones = [rng.randrange(3, w - 3) for _ in range(1 + w // 80)]
+        for name, n in (("crab", 1 + w // 120), ("snail", 1 + w // 160)):
+            for _ in range(n):
+                self.critters.append([name, rng.uniform(2, w - 12), rng.choice((-1, 1)), 0.0])
+        self.sparks = [(rng.randrange(w), rng.randrange(5, self.floor), rng.uniform(0, 6.28))
+                       for _ in range(w * ph // 350)]
         count = self.n_fish
         if count is None:
             count = max(3, min(18, w * ph // 900))
@@ -569,6 +759,21 @@ class PixelTank:
             b[1] -= b[2] * dt
         self.bubbles = [b for b in self.bubbles if b[1] >= 3]
 
+        for c in self.critters:
+            speed, _r, _l, cw, _ch = CRITTERS[c[0]]
+            if c[3] > 0:
+                c[3] -= dt
+            else:
+                c[1] += c[2] * speed * dt
+                if rng.random() < 0.15 * dt:
+                    c[3] = rng.uniform(1, 4)
+                if rng.random() < 0.05 * dt:
+                    c[2] = -c[2]
+            if c[1] < 1:
+                c[1], c[2] = 1.0, 1
+            elif c[1] > w - cw - 1:
+                c[1], c[2] = float(w - cw - 1), -1
+
         for k in self.flakes:
             x = min(w - 1, max(0, int(k[0])))
             if k[1] < self.dune[x] - 1:
@@ -585,7 +790,7 @@ class PixelTank:
             out.append(int(max(0.0, min(1.0, (v - 0.5) / 1.7)) * (N_LEVELS - 1) + 0.5))
         return bytes(out)
 
-    def draw(self, state, now, hint):
+    def draw(self, state, now, hint, night=False):
         """Returns the pixel rows and {cell row: {cell column: character}}."""
         w, ph, t = self.w, self.ph, self.t
         if t - self.levels_at >= 0.4 or len(self.levels) != w + self.slant + 1:
@@ -612,13 +817,21 @@ class PixelTank:
                 r0[x] = 0xE2F8FF
 
         text = {}
+        y = max(6, int(ph * 0.08))
         if state.clock:
-            self._draw_clock(rows, text, state, now)
+            y = self._draw_clock(rows, state, now)
+        if state.date:
+            self._draw_date(rows, now, y, bool(state.clock) and self.clock_u >= 4)
 
         self._draw_plants(rows, False)
         for spans, row in zip(self.static, rows):
             for x0, cols in spans:
                 row[x0:x0 + len(cols)] = cols
+        for name, cx, direction, _pause in self.critters:
+            _speed, right, left, cw, ch = CRITTERS[name]
+            frames = right if direction > 0 else left
+            foot = self.dune[min(w - 1, int(cx) + cw // 2)]
+            blit(rows, frames[int(cx) % len(frames)], int(cx), foot - ch + 1, w, ph)
 
         for layer in (0, 1):
             self._draw_fish(rows, layer)
@@ -640,11 +853,20 @@ class PixelTank:
             y = int(fy)
             if 0 <= x < w and 0 <= y < ph:
                 rows[y][x] = 0xE8B04A if phase > 3 else 0xD0703A
+        if night:
+            # Glowing plankton.
+            for x, y, phase in self.sparks:
+                if math.sin(t * 1.7 + phase) > 0.7:
+                    rows[y][x] = SPARK
 
+        if state.monitor and state.metrics:
+            self._draw_monitor(rows, text, state.metrics)
         if state.paused:
             self._text(text, 1, 2, "[paused]")
-        if hint and w >= len(HINT) + 2:
-            self._text(text, self.h - 1, (w - len(HINT)) // 2, HINT)
+        if hint:
+            lines = hint_lines(w)
+            for i, line in enumerate(lines):
+                self._text(text, self.h - len(lines) + i, max(0, (w - len(line)) // 2), line)
         return rows, text
 
     @staticmethod
@@ -686,19 +908,46 @@ class PixelTank:
                         if i < thick and x + 1 < w:
                             rows[y][x + 1] = cols[i]
 
-    def _draw_clock(self, rows, text, state, now):
-        w, ph = self.w, self.ph
-        label, date, suffix = clock_text(state, now)
-        units = sum(5 if ch in SEGMENTS else 2 for ch in label) - 1
-        u = min(5, w // (units + 6), int(ph * 0.34) // 7)
-        if u < 1 or ph < 36:
-            small = label + suffix
-            self._text(text, 1, w - len(small) - 2, small)
-            return
-
+    def _glow_rect(self, rows, x, y, width, height, colour=None):
+        """Lightens a rectangle of water, or fills it when a colour is given."""
         glow, lit_colours = self.glow, self.lit_colours
+        for yy in range(max(0, y), min(self.ph, y + height)):
+            row = rows[yy]
+            for xx in range(max(0, x), min(self.w, x + width)):
+                if colour is not None:
+                    row[xx] = colour
+                    continue
+                c = row[xx]
+                if c in lit_colours:
+                    continue  # already lit, for example where two bars meet
+                lit = glow.get(c)
+                if lit is None:
+                    lit = glow[c] = mix(c & RGB, WHITE, 0.62) | EMISSIVE
+                    lit_colours.add(lit)
+                row[xx] = lit
+
+    def _glow_text(self, rows, x, y, s, scale):
+        for ch in s:
+            glyph = FONT.get(ch)
+            if glyph:
+                for r, line in enumerate(glyph):
+                    for c, bit in enumerate(line):
+                        if bit == "#":
+                            self._glow_rect(rows, x + c * scale, y + r * scale, scale, scale)
+            x += 4 * scale
+
+    def _draw_clock(self, rows, state, now):
+        """Draws the seven segment clock. Returns the pixel row below it."""
+        w = self.w
+        label, _date, suffix = clock_text(state, now)
+        units = sum(5 if ch in SEGMENTS else 2 for ch in label) - 1
+        y0 = max(6, int(self.ph * 0.08))
+        top = max(1, min(8, (w - 4) // units, (self.floor - y0 - 4) // 7))
+        auto = max(1, min(5, w // (units + 6), int(self.ph * 0.34) // 7))
+        u = min(top, state.clock_size or auto)
+        self.clock_u, self.clock_max = u, top
+
         x = (w - units * u) // 2
-        y0 = max(6, int(ph * 0.08))
         for ch in label:
             if ch in SEGMENTS:
                 bars = [BARS[seg] for seg in SEGMENTS[ch]]
@@ -707,19 +956,48 @@ class PixelTank:
                 bars = [(0, 2, 1, 1), (0, 4, 1, 1)] if ch == ":" else []
                 advance = 2
             for bx, by, bw, bh in bars:
-                for yy in range(y0 + by * u, min(ph, y0 + (by + bh) * u)):
-                    row = rows[yy]
-                    for xx in range(max(0, x + bx * u), min(w, x + (bx + bw) * u)):
-                        c = row[xx]
-                        if c in lit_colours:
-                            continue  # two bars share this corner
-                        lit = glow.get(c)
-                        if lit is None:
-                            lit = glow[c] = mix(c, WHITE, 0.62)
-                            lit_colours.add(lit)
-                        row[xx] = lit
+                self._glow_rect(rows, x + bx * u, y0 + by * u, bw * u, bh * u)
             x += advance * u
-        self._text(text, (y0 + 7 * u) // 2 + 1, (w - len(date)) // 2, date)
+        if suffix:
+            self._glow_text(rows, x + 1, y0, suffix.strip(), 2 if u >= 4 else 1)
+        return y0 + 7 * u + max(2, u)
+
+    def _draw_date(self, rows, now, y, big):
+        s = "%s %d %s" % (DAYS[now.tm_wday].upper(), now.tm_mday,
+                          MONTHS[now.tm_mon - 1].upper())
+        scale = 2 if big else 1
+        width = len(s) * 4 * scale - scale
+        if width <= self.w - 2 and y + 5 * scale < self.floor:
+            self._glow_text(rows, (self.w - width) // 2, y, s, scale)
+
+    def _draw_monitor(self, rows, text, metrics):
+        """A dark glass panel above the sand with one line per reading."""
+        w = self.w
+        first = (self.floor - 3) // 2 - len(metrics)  # top cell row of the panel
+        if w < 40 or first < 4:
+            line = "  ".join("%s %s" % (label, value) for label, value, _f in metrics)
+            self._text(text, 2, 2, line[:max(0, w - 4)])
+            return
+
+        x0, width = 2, 23
+        dark = self.dark
+        for yy in range(2 * first - 1, 2 * (first + len(metrics)) + 1):
+            row = rows[yy]
+            for xx in range(x0 - 1, x0 + width):
+                c = row[xx]
+                shade = dark.get(c)
+                if shade is None:
+                    shade = dark[c] = mix(c & RGB, 0x02101F, 0.6)
+                row[xx] = shade
+        for i, (label, value, fraction) in enumerate(metrics):
+            self._text(text, first + i, x0, label)
+            self._text(text, first + i, x0 + 17, value)
+            if fraction is not None:
+                fraction = max(0.0, min(1.0, fraction))
+                colour = GOOD if fraction < 0.6 else WARN if fraction < 0.85 else BAD
+                y = 2 * (first + i) + 1  # lower half of the cell, so bars stay apart
+                self._glow_rect(rows, x0 + 5, y, 11, 1, TRACK)
+                self._glow_rect(rows, x0 + 5, y, int(round(11 * fraction)), 1, colour)
 
 
 class PixelEncoder:
@@ -727,8 +1005,23 @@ class PixelEncoder:
 
     def __init__(self, mode):
         self.mode = mode
+        self.night = False
         self.cache = {}
         self.near = {}
+
+    def set_night(self, night):
+        if night != self.night:
+            self.night = night
+            self.cache.clear()
+
+    def _shade(self, colour):
+        """The colour as shown: dimmed and bluer at night unless it glows."""
+        if colour & EMISSIVE:
+            return colour & RGB
+        if self.night:
+            return ((int((colour >> 16) * 0.36) << 16) | (int(((colour >> 8) & 255) * 0.44) << 8)
+                    | int((colour & 255) * 0.68))
+        return colour
 
     def _nearest(self, colour, limit):
         key = (colour, limit)
@@ -768,7 +1061,7 @@ class PixelEncoder:
         """Returns (foreground code or None, background code, character)."""
         if len(self.cache) > 60000:
             self.cache.clear()
-        top, bottom = pair
+        top, bottom = self._shade(pair[0]), self._shade(pair[1])
         if self.mode == "16":
             a, b = self._nearest(top, 16), self._nearest(bottom, 16)
             if a == b:
@@ -792,11 +1085,12 @@ class PixelEncoder:
         cur_fg = cur_bg = None
         if text:
             cells = []
-            white = self._fg(WHITE)
+            ink = self._fg(self._shade(TEXT))
             for x, pair in enumerate(zip(top, bottom)):
                 ch = text.get(x)
                 if ch:
-                    cells.append(((white, self._bg(mix(pair[0], pair[1], 0.5)), ch), 1))
+                    behind = self._shade(mix(pair[0] & RGB, pair[1] & RGB, 0.5))
+                    cells.append(((ink, self._bg(behind), ch), 1))
                 else:
                     cells.append((cache.get(pair) or self._codes(pair), 1))
         else:
@@ -822,7 +1116,10 @@ def render_pixel(tank, state, encoder, hint=False):
     w, h = tank.w, tank.h
     if w < MIN_W or h < MIN_H:
         return too_small(w, h)
-    rows, text = tank.draw(state, time.localtime(), hint)
+    now = time.localtime()
+    night = is_night(state, now)
+    encoder.set_night(night)
+    rows, text = tank.draw(state, now, hint, night)
     return [encoder.line(rows[2 * y], rows[2 * y + 1], text.get(y)) for y in range(h)]
 
 
@@ -1090,8 +1387,13 @@ class AsciiTank:
 
         if state.paused:
             text(2, 1, "[paused]", C_CLOCK)
-        if hint and w >= len(HINT) + 2:
-            text((w - len(HINT)) // 2, h - 1, HINT, C_CLOCK)
+        if state.monitor and state.metrics:
+            line = "  ".join("%s %s" % (label, value) for label, value, _f in state.metrics)
+            text(2, 2, line[:max(0, w - 4)], C_CLOCK)
+        if hint:
+            lines = hint_lines(w)
+            for i, line in enumerate(lines):
+                text(max(0, (w - len(line)) // 2), h - len(lines) + i, line, C_CLOCK)
         return chars, cols
 
     def _draw_clock(self, text, state, now):
@@ -1105,7 +1407,8 @@ class AsciiTank:
                 for row, line in enumerate(glyph):
                     text(x, 2 + row, "".join(c * 2 for c in line), C_CLOCK)
                 x += len(glyph[0]) * 2 + 2
-            text((w - len(date)) // 2, 8, date, C_DATE)
+            if state.date:
+                text((w - len(date)) // 2, 8, date, C_DATE)
         else:
             small = label + suffix
             if w >= len(small) + 4:
@@ -1154,6 +1457,17 @@ def handle_keys(data, state, tank, now):
             state.seconds = not state.seconds
         elif ch == "t":
             state.h12 = not state.h12
+        elif ch == "d":
+            state.date = not state.date
+        elif ch == "n":
+            state.night = "off" if is_night(state, time.localtime()) else "on"
+        elif ch == "m":
+            state.monitor = not state.monitor
+        elif ch in ("[", "]"):
+            size = state.clock_size or getattr(tank, "clock_u", 0)
+            top = getattr(tank, "clock_max", 0)
+            if size and top:
+                state.clock_size = max(1, min(top, size + (1 if ch == "]" else -1)))
         elif ch == "v":
             state.style = "ascii" if state.style == "pixel" else "pixel"
         elif ch == "f":
@@ -1214,6 +1528,7 @@ def run(args, colour, mode):
     state = State(args)
     state.hint_until = time.monotonic() + 6
     encoder = PixelEncoder(mode)
+    monitor = SysMon()
     own_palette = mode == "16" and os.environ.get("TERM") == "linux"
     tank = None
     frame = 1.0 / args.fps
@@ -1245,6 +1560,9 @@ def run(args, colour, mode):
             if not state.paused:
                 tank.step(dt)
 
+            if state.monitor:
+                monitor.update(now)
+                state.metrics = monitor.rows
             hint = now < state.hint_until
             if tank.style == "pixel":
                 lines = render_pixel(tank, state, encoder, hint)
@@ -1288,6 +1606,8 @@ def snapshot(args, colour, mode):
     tank.resize(size.columns, size.lines - 1)
     for _ in range(50):
         tank.step(0.1)
+    if state.monitor:
+        state.metrics = SysMon().sample()
     if state.style == "pixel":
         lines = render_pixel(tank, state, PixelEncoder(mode))
     else:
@@ -1320,7 +1640,15 @@ def main(argv=None):
     parser.add_argument("--colors", choices=("auto", "true", "256", "16"), default="auto",
                         help="colour depth for the pixel style (default auto)")
     parser.add_argument("--no-clock", action="store_true", help="start with the clock hidden")
+    parser.add_argument("--no-date", action="store_true", help="start with the date hidden")
+    parser.add_argument("--clock-size", type=_bounded(1, 8), metavar="N",
+                        help="clock size in the pixel style, 1 to 8 (default fits the terminal)")
     parser.add_argument("--seconds", action="store_true", help="show seconds on the clock")
+    parser.add_argument("--night", choices=("auto", "on", "off"), default="auto",
+                        help="night lighting in the pixel style. auto follows the "
+                             "clock, dark from 19:00 to 06:00 (default auto)")
+    parser.add_argument("--monitor", action="store_true",
+                        help="show CPU, memory, disk, temperature and load")
     parser.add_argument("--12h", dest="h12", action="store_true", help="12 hour clock")
     parser.add_argument("--fish", type=_bounded(0, MAX_FISH), metavar="N",
                         help="number of fish (default depends on the terminal size)")
