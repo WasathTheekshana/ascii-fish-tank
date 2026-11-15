@@ -68,7 +68,7 @@ Remove it with `sudo apt remove ascii-fish-tank`.
 
 ### pipx or pip
 
-This works on any system with Python 3.9 or newer:
+This works on any system with Python 3.10 or newer:
 
 ```
 pipx install git+https://github.com/WasathTheekshana/ascii-fish-tank

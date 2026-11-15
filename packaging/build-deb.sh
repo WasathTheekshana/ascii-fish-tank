@@ -22,7 +22,7 @@ Version: $version
 Section: games
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.9)
+Depends: python3 (>= 3.10)
 Maintainer: Wasath Theekshana <WasathTheekshana@users.noreply.github.com>
 Homepage: https://github.com/WasathTheekshana/ascii-fish-tank
 Description: ASCII fish tank for the terminal

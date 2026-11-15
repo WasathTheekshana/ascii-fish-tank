@@ -4,7 +4,7 @@ Bug reports and pull requests are welcome.
 
 ## Setup
 
-The program is one file, `ascii_fish_tank.py`, and needs only Python 3.9 or newer. Clone the repo and run it:
+The program is one file, `ascii_fish_tank.py`, and needs only Python 3.10 or newer. Clone the repo and run it:
 
 ```
 python3 ascii_fish_tank.py
