@@ -15,7 +15,7 @@ jobs:
       matrix:
         python: ["3.9", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -24,7 +24,7 @@ jobs:
   pip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: pipx install .
       - run: ascii-fish-tank --version
       - run: ascii-fish-tank --snapshot --no-color
@@ -32,7 +32,7 @@ jobs:
   deb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: sh packaging/build-deb.sh
       - run: sudo apt-get install -y ./dist/ascii-fish-tank.deb
       - run: ascii-fish-tank --version
@@ -41,7 +41,7 @@ jobs:
   nix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - run: nix build --print-build-logs
       - run: ./result/bin/ascii-fish-tank --snapshot --no-color
