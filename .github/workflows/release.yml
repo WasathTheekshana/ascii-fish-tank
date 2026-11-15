@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the version in the code
+        run: |
+          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' ascii_fish_tank.py)
+          test "v$version" = "$GITHUB_REF_NAME"
+
+      - run: python3 -m unittest discover -s tests
+      - run: sh packaging/build-deb.sh
+      - run: pipx run build
+
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
